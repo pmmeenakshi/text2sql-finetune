@@ -1,0 +1,10 @@
+gradio
+transformers
+datasets
+trl
+peft
+bitsandbytes
+unsloth
+accelerate
+sentencepiece
+torch
