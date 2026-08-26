@@ -31,9 +31,14 @@ EVAL_SAMPLE_SIZE = 100
 TEST_SPLIT_FRACTION = 0.1
 
 # Output and model artifact directories.
-OUTPUT_DIR = "outputs"
-ADAPTER_DIR = "outputs/text2sql_adapter"
-CHECKPOINT_DIR = "outputs/checkpoints"
+# Colab's local /content disk is temporary, so every artifact is stored on Google Drive.
+DRIVE_ROOT = "/content/drive/MyDrive/text2sql-finetune"
+OUTPUT_DIR = f"{DRIVE_ROOT}/outputs"
+ADAPTER_DIR = f"{DRIVE_ROOT}/outputs/text2sql_adapter"
+CHECKPOINT_DIR = f"{DRIVE_ROOT}/outputs/checkpoints"
+BASE_PREDICTIONS_PATH = f"{DRIVE_ROOT}/outputs/base_predictions.json"
+FINE_TUNED_PREDICTIONS_PATH = f"{DRIVE_ROOT}/outputs/fine_tuned_predictions.json"
+RESULTS_PATH = f"{DRIVE_ROOT}/results.json"
 
 # A small convenience for notebook reuse and CI checks.
 MODEL_NAME = "text2sql-qwen2.5-1.5b-lora"

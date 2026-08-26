@@ -279,9 +279,20 @@ def run_evaluation(model, tokenizer, dataset, n: int = 10, predictions_path: str
         context = row["context"]
 
         predicted_sql = extract_sql(generate_sql(model, tokenizer, question, context))
-        predictions.append({"index": index, "prediction": predicted_sql, "reference": reference_sql})
+        exact_match = normalize_sql(predicted_sql) == normalize_sql(reference_sql)
+        execution_match = False
+        predictions.append(
+            {
+                "index": index,
+                "question": question,
+                "context": context,
+                "reference_sql": reference_sql,
+                "predicted_sql": predicted_sql,
+                "exact_match": exact_match,
+            }
+        )
 
-        if normalize_sql(predicted_sql) == normalize_sql(reference_sql):
+        if exact_match:
             exact_matches += 1
 
         try:
@@ -291,8 +302,11 @@ def run_evaluation(model, tokenizer, dataset, n: int = 10, predictions_path: str
             informative_examples += 1
             if compare_execution_results(predicted_sql, reference_sql, row["context"]):
                 execution_matches += 1
+                predictions[-1]["execution_match"] = True
+            else:
+                predictions[-1]["execution_match"] = False
         except Exception:
-            pass
+            predictions[-1]["execution_match"] = False
 
     if predictions_path:
         save_predictions(predictions, predictions_path)
