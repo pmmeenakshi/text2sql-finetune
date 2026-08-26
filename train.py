@@ -144,30 +144,37 @@ def train_model(model, tokenizer, train_dataset):
 
     print(f"Using bf16={use_bf16}, fp16={use_fp16}, gradient_checkpointing=True")
 
-    sft_config = SFTConfig(
-        output_dir=OUTPUT_DIR,
-        per_device_train_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        learning_rate=LEARNING_RATE,
-        num_train_epochs=EPOCHS,
-        max_seq_length=MAX_SEQ_LENGTH,
-        dataset_text_field="text",
-        logging_steps=25,
-        save_strategy="steps",
-        save_steps=100,
-        warmup_ratio=0.05,
-        lr_scheduler_type="linear",
-        bf16=use_bf16,
-        fp16=use_fp16,
-        gradient_checkpointing=True,
-        seed=SEED,
-        packing=False,
-        remove_unused_columns=False,
-    )
+    config_kwargs = {
+        "output_dir": OUTPUT_DIR,
+        "per_device_train_batch_size": BATCH_SIZE,
+        "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
+        "learning_rate": LEARNING_RATE,
+        "num_train_epochs": EPOCHS,
+        "max_seq_length": MAX_SEQ_LENGTH,
+        "max_length": MAX_SEQ_LENGTH,
+        "dataset_text_field": "text",
+        "logging_steps": 25,
+        "save_strategy": "steps",
+        "save_steps": 100,
+        "warmup_ratio": 0.05,
+        "lr_scheduler_type": "linear",
+        "bf16": use_bf16,
+        "fp16": use_fp16,
+        "gradient_checkpointing": True,
+        "seed": SEED,
+        "packing": False,
+        "remove_unused_columns": False,
+    }
+    config_signature = inspect.signature(SFTConfig.__init__).parameters
+    config_kwargs = {
+        key: value for key, value in config_kwargs.items() if key in config_signature
+    }
+    sft_config = SFTConfig(**config_kwargs)
 
     trainer_kwargs = {
         "model": model,
         "tokenizer": tokenizer,
+        "processing_class": tokenizer,
         "train_dataset": training_dataset,
         "args": sft_config,
     }
@@ -178,6 +185,8 @@ def train_model(model, tokenizer, train_dataset):
     trainer_signature = inspect.signature(SFTTrainer.__init__)
     if "tokenizer" not in trainer_signature.parameters:
         trainer_kwargs.pop("tokenizer")
+    if "processing_class" not in trainer_signature.parameters:
+        trainer_kwargs.pop("processing_class")
 
     trainer = SFTTrainer(**trainer_kwargs)
     trainer.train()
