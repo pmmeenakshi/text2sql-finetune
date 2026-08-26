@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import json
+from pathlib import Path
 from typing import List, Sequence, Tuple
 
 from data import render_prompt
@@ -111,18 +113,78 @@ def _extract_column_types(create_statement: str) -> List[Tuple[str, str]]:
     return columns
 
 
-def _generate_synthetic_rows(create_statement: str, n_rows: int = 3) -> List[Tuple]:
-    """Generate a few rows from the column types so execution accuracy tests real SQLite behavior."""
+def _extract_predicates(reference_sql: str):
+    """Extract simple WHERE predicates used by the WikiSQL-style reference queries."""
+    where_match = re.search(
+        r"\bWHERE\b(.*?)(?:\bGROUP\s+BY\b|\bORDER\s+BY\b|\bLIMIT\b|$)",
+        reference_sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not where_match:
+        return []
+
+    predicate_pattern = re.compile(
+        r"([A-Za-z_][A-Za-z0-9_]*)\s*(>=|<=|!=|<>|=|>|<|LIKE)\s*"
+        r"(?:'([^']*)'|\"([^\"]*)\"|(-?\d+(?:\.\d+)?))",
+        flags=re.IGNORECASE,
+    )
+    predicates = []
+    for match in predicate_pattern.finditer(where_match.group(1)):
+        column, operator = match.group(1), match.group(2).upper()
+        literal = next(value for value in match.groups()[2:] if value is not None)
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", literal):
+            literal = float(literal) if "." in literal else int(literal)
+        predicates.append((column, operator, literal))
+    return predicates
+
+
+def _value_for_predicate(operator: str, literal, positive: bool):
+    """Return a value that satisfies or violates one simple SQL predicate."""
+    if operator in {"=", "LIKE"}:
+        if positive:
+            return literal
+        if isinstance(literal, (int, float)):
+            return literal + 1
+        return f"not_{literal}"
+    if operator in {"!=", "<>"}:
+        if positive:
+            return literal + 1 if isinstance(literal, (int, float)) else f"not_{literal}"
+        return literal
+    if isinstance(literal, (int, float)):
+        if operator == ">":
+            return literal + 1 if positive else literal
+        if operator == ">=":
+            return literal if positive else literal - 1
+        if operator == "<":
+            return literal - 1 if positive else literal
+        if operator == "<=":
+            return literal if positive else literal + 1
+    return literal if positive else f"not_{literal}"
+
+
+def _generate_synthetic_rows(
+    create_statement: str,
+    reference_sql: str | None = None,
+    n_rows: int = 3,
+) -> List[Tuple]:
+    """Generate varied positive and negative rows for the reference query."""
     column_types = _extract_column_types(create_statement)
     if not column_types:
         return [(1, "sample_1"), (2, "sample_2")]
 
+    predicates = _extract_predicates(reference_sql or "")
+    predicate_by_column = {column.lower(): (operator, literal) for column, operator, literal in predicates}
     rows = []
-    for i in range(1, n_rows + 1):
+    for i in range(1, n_rows * 2 + 1):
         row = []
-        for _, col_type in column_types:
+        for column_name, col_type in column_types:
             upper = col_type.upper()
-            if "INT" in upper or "NUMBER" in upper:
+            predicate = predicate_by_column.get(column_name.lower())
+            positive = i <= n_rows
+            if predicate:
+                operator, literal = predicate
+                row.append(_value_for_predicate(operator, literal, positive))
+            elif "INT" in upper or "NUMBER" in upper:
                 row.append(i)
             elif "REAL" in upper or "FLOAT" in upper or "DOUBLE" in upper:
                 row.append(float(i))
@@ -134,14 +196,12 @@ def _generate_synthetic_rows(create_statement: str, n_rows: int = 3) -> List[Tup
     return rows
 
 
-def compare_execution_results(predicted_sql: str, reference_sql: str, create_statement: str) -> bool:
-    """Run both queries against the same in-memory SQLite table and compare results.
-
-    Any SQL error or malformed predicted query is treated as a failure, which is the right
-    behavior for a generation system that must return valid SQL.
-    """
+def _execute_query(sql: str, create_statement: str, reference_sql: str):
+    """Execute SQL against rows designed to make the reference query informative."""
     table_name = _extract_table_name(create_statement)
-    rows = _generate_synthetic_rows(create_statement)
+    rows = _generate_synthetic_rows(create_statement, reference_sql=reference_sql)
+    if not rows:
+        return None
 
     conn = sqlite3.connect(":memory:")
     try:
@@ -149,23 +209,55 @@ def compare_execution_results(predicted_sql: str, reference_sql: str, create_sta
         placeholders = ", ".join(["?"] * len(rows[0]))
         for row in rows:
             conn.execute(f"INSERT INTO {table_name} VALUES ({placeholders})", row)
-
-        try:
-            pred_result = conn.execute(predicted_sql).fetchall()
-        except Exception:
-            return False
-
-        try:
-            ref_result = conn.execute(reference_sql).fetchall()
-        except Exception:
-            return False
-
-        return pred_result == ref_result
+        return conn.execute(sql).fetchall()
+    except Exception:
+        return None
     finally:
         conn.close()
 
 
-def run_evaluation(model, tokenizer, dataset, n: int = 10):
+def compare_execution_results(predicted_sql: str, reference_sql: str, create_statement: str) -> bool:
+    """Run both queries against the same in-memory SQLite table and compare results.
+
+    Any SQL error or malformed predicted query is treated as a failure, which is the right
+    behavior for a generation system that must return valid SQL.
+    """
+    pred_result = _execute_query(predicted_sql, create_statement, reference_sql)
+    ref_result = _execute_query(reference_sql, create_statement, reference_sql)
+    return pred_result is not None and ref_result is not None and pred_result == ref_result
+
+
+def run_harness_checks(dataset, n: int = 20):
+    """Validate that identity is perfect and an unfiltered query is not usually correct."""
+    identity_matches = 0
+    null_matches = 0
+    checked = min(n, len(dataset))
+    for index in range(checked):
+        row = dataset[index]
+        reference_sql = row["answer"]
+        reference_result = _execute_query(reference_sql, row["context"], reference_sql)
+        if reference_result is None or reference_result == []:
+            continue
+        if compare_execution_results(reference_sql, reference_sql, row["context"]):
+            identity_matches += 1
+        table_name = _extract_table_name(row["context"])
+        if compare_execution_results(f"SELECT * FROM {table_name}", reference_sql, row["context"]):
+            null_matches += 1
+    return {
+        "identity_accuracy": identity_matches / checked if checked else 0.0,
+        "unfiltered_query_accuracy": null_matches / checked if checked else 0.0,
+        "examples_checked": checked,
+    }
+
+
+def save_predictions(predictions, path: str = "outputs/evaluation_predictions.json") -> None:
+    """Persist generated SQL so future scoring changes do not require GPU generation."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(predictions, indent=2), encoding="utf-8")
+
+
+def run_evaluation(model, tokenizer, dataset, n: int = 10, predictions_path: str | None = None):
     """Return exact-match and execution-accuracy on a subset of the dataset.
 
     The model generation block is the real GPU-dependent portion. The metric calculations
@@ -173,6 +265,8 @@ def run_evaluation(model, tokenizer, dataset, n: int = 10):
     """
     exact_matches = 0
     execution_matches = 0
+    informative_examples = 0
+    predictions = []
     total = min(n, len(dataset))
 
     for index in range(total):
@@ -182,19 +276,29 @@ def run_evaluation(model, tokenizer, dataset, n: int = 10):
         context = row["context"]
 
         predicted_sql = extract_sql(generate_sql(model, tokenizer, question, context))
+        predictions.append({"index": index, "prediction": predicted_sql, "reference": reference_sql})
 
         if normalize_sql(predicted_sql) == normalize_sql(reference_sql):
             exact_matches += 1
 
         try:
+            reference_result = _execute_query(reference_sql, row["context"], reference_sql)
+            if reference_result is None or reference_result == []:
+                continue
+            informative_examples += 1
             if compare_execution_results(predicted_sql, reference_sql, row["context"]):
                 execution_matches += 1
         except Exception:
             pass
 
+    if predictions_path:
+        save_predictions(predictions, predictions_path)
+
     return {
         "exact_match": exact_matches / total if total else 0.0,
-        "execution_accuracy": execution_matches / total if total else 0.0,
+        "execution_accuracy": execution_matches / informative_examples if informative_examples else 0.0,
+        "informative_execution_examples": informative_examples,
+        "total_examples": total,
     }
 
 
