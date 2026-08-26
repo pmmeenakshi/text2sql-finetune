@@ -33,15 +33,21 @@ def generate_sql(model, tokenizer, question: str, context: str, max_new_tokens: 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
     inputs = {key: value.to(model.device) for key, value in inputs.items()}
 
-    with model.disable_adapter():
-        pass
-
-    generated_ids = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
-        do_sample=False,
-        use_cache=True,
-    )
+    if hasattr(model, "disable_adapter"):
+        with model.disable_adapter():
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                use_cache=True,
+            )
+    else:
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            use_cache=True,
+        )
 
     prompt_length = inputs["input_ids"].shape[1]
     new_tokens = generated_ids[:, prompt_length:]
