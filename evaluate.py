@@ -26,6 +26,26 @@ def normalize_sql(sql: str) -> str:
     return cleaned.strip()
 
 
+def extract_sql(generated_text: str) -> str:
+    """Keep the SQL portion when a model adds markdown or an explanation."""
+    cleaned = (generated_text or "").strip()
+    fenced_match = re.search(r"```(?:sql)?\s*(.*?)```", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    if fenced_match:
+        cleaned = fenced_match.group(1).strip()
+
+    cleaned = re.split(r"\s*###(?:\s*(?:answer|explanation|created answer))?", cleaned, maxsplit=1, flags=re.IGNORECASE)[0]
+    cleaned = re.split(r"\n\s*(?:answer|explanation)\s*:", cleaned, maxsplit=1, flags=re.IGNORECASE)[0]
+
+    statement_start = re.search(r"\b(?:select|with|insert|update|delete)\b", cleaned, flags=re.IGNORECASE)
+    if statement_start:
+        cleaned = cleaned[statement_start.start():]
+
+    semicolon = cleaned.find(";")
+    if semicolon >= 0:
+        cleaned = cleaned[: semicolon + 1]
+    return cleaned.strip()
+
+
 def generate_sql(
     model,
     tokenizer,
@@ -161,7 +181,7 @@ def run_evaluation(model, tokenizer, dataset, n: int = 10):
         question = row["question"]
         context = row["context"]
 
-        predicted_sql = generate_sql(model, tokenizer, question, context)
+        predicted_sql = extract_sql(generate_sql(model, tokenizer, question, context))
 
         if normalize_sql(predicted_sql) == normalize_sql(reference_sql):
             exact_matches += 1
@@ -184,6 +204,8 @@ def _demo_sql_checks():
     assert normalize_sql("SELECT   *\nFROM users") == "select * from users"
     assert normalize_sql("SELECT 1") != normalize_sql("SELECT 2")
     assert normalize_sql("SELECT 1 FROM users") == normalize_sql("select 1 from users")
+    assert extract_sql("SELECT * FROM users ### Explanation\nSome text") == "SELECT * FROM users"
+    assert extract_sql("```sql\nSELECT * FROM users;\n```") == "SELECT * FROM users;"
 
     create_statement = "CREATE TABLE users (id INTEGER, name TEXT);"
     assert compare_execution_results("SELECT id, name FROM users", "SELECT id, name FROM users", create_statement)
