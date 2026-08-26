@@ -26,7 +26,7 @@ EPOCHS = 1
 SEED = 42
 
 # Dataset sampling and evaluation settings.
-TRAIN_SUBSET = 200
+TRAIN_SUBSET = 20000
 EVAL_SAMPLE_SIZE = 100
 TEST_SPLIT_FRACTION = 0.1
 
