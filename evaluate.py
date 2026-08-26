@@ -231,6 +231,7 @@ def run_harness_checks(dataset, n: int = 20):
     """Validate that identity is perfect and an unfiltered query is not usually correct."""
     identity_matches = 0
     null_matches = 0
+    informative_examples = 0
     checked = min(n, len(dataset))
     for index in range(checked):
         row = dataset[index]
@@ -238,14 +239,16 @@ def run_harness_checks(dataset, n: int = 20):
         reference_result = _execute_query(reference_sql, row["context"], reference_sql)
         if reference_result is None or reference_result == []:
             continue
+        informative_examples += 1
         if compare_execution_results(reference_sql, reference_sql, row["context"]):
             identity_matches += 1
         table_name = _extract_table_name(row["context"])
         if compare_execution_results(f"SELECT * FROM {table_name}", reference_sql, row["context"]):
             null_matches += 1
     return {
-        "identity_accuracy": identity_matches / checked if checked else 0.0,
-        "unfiltered_query_accuracy": null_matches / checked if checked else 0.0,
+        "identity_accuracy": identity_matches / informative_examples if informative_examples else 0.0,
+        "unfiltered_query_accuracy": null_matches / informative_examples if informative_examples else 0.0,
+        "informative_examples": informative_examples,
         "examples_checked": checked,
     }
 
