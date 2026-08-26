@@ -26,14 +26,21 @@ def normalize_sql(sql: str) -> str:
     return cleaned.strip()
 
 
-def generate_sql(model, tokenizer, question: str, context: str, max_new_tokens: int = 128) -> str:
+def generate_sql(
+    model,
+    tokenizer,
+    question: str,
+    context: str,
+    max_new_tokens: int = 128,
+    disable_adapter: bool = False,
+) -> str:
     """Render the inference prompt, generate the completion, and decode only the new tokens."""
     prompt = render_prompt(question=question, context=context)
 
     inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
     inputs = {key: value.to(model.device) for key, value in inputs.items()}
 
-    if hasattr(model, "disable_adapter"):
+    if disable_adapter and hasattr(model, "disable_adapter"):
         with model.disable_adapter():
             generated_ids = model.generate(
                 **inputs,
