@@ -123,7 +123,7 @@ def prepare_training_dataset(train_dataset, tokenizer=None):
     return train_dataset.map(_map_row, remove_columns=train_dataset.column_names)
 
 
-def train_model(model, tokenizer, train_dataset):
+def train_model(model, tokenizer, train_dataset, resume_from_checkpoint=None):
     """Run the fine-tuning loop with LoRA.
 
     The trainer API varies by `trl` version, so we inspect the installed signature and call
@@ -189,7 +189,7 @@ def train_model(model, tokenizer, train_dataset):
         trainer_kwargs.pop("processing_class")
 
     trainer = SFTTrainer(**trainer_kwargs)
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     # Save adapter and tokenizer for later evaluation or app loading.
     trainer.model.save_pretrained(ADAPTER_DIR)
