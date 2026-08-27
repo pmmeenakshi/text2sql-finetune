@@ -155,7 +155,10 @@ def train_model(model, tokenizer, train_dataset, resume_from_checkpoint=None):
         "dataset_text_field": "text",
         "logging_steps": 25,
         "save_strategy": "steps",
-        "save_steps": 100,
+        # Checkpoint to Drive so a Colab disconnect cannot destroy a run, but cap the
+        # number kept: each checkpoint carries optimizer state and Drive quota is finite.
+        "save_steps": 250,
+        "save_total_limit": 2,
         "warmup_ratio": 0.05,
         "lr_scheduler_type": "linear",
         "bf16": use_bf16,

@@ -16,16 +16,26 @@ from typing import List, Sequence, Tuple
 from data import render_prompt
 
 
-def normalize_sql(sql: str) -> str:
-    """Canonicalize SQL so equivalent queries compare cleanly.
+# Matches a single- or double-quoted SQL string literal.
+_LITERAL = re.compile(r"(\"[^\"]*\"|'[^']*')")
 
-    Lowercasing and whitespace collapsing makes the exact-match metric more stable across
-    minor formatting differences like case changes and extra spaces.
+
+def normalize_sql(sql: str) -> str:
+    """Canonicalize SQL for exact-match comparison.
+
+    Lowercases keywords and identifiers, which are case-insensitive in SQL, but preserves
+    the contents of quoted string literals, which are not. Comparing
+    `= "Memorial Tournament"` against `= "Memorial tournament"` must NOT count as a match:
+    against a real database those two queries return different rows, and execution
+    accuracy correctly scores them as different.
+
+    An earlier version lowercased the entire query including literals, which inflated
+    exact match by 4 points (77/100 -> 73/100 on the reported evaluation run).
     """
-    cleaned = (sql or "").strip().lower()
-    cleaned = re.sub(r"\s+", " ", cleaned)
-    cleaned = cleaned.rstrip(";")
-    return cleaned.strip()
+    cleaned = (sql or "").strip().rstrip(";")
+    parts = _LITERAL.split(cleaned)
+    cleaned = "".join(p if p[:1] in ('"', "'") else p.lower() for p in parts)
+    return " ".join(cleaned.split())
 
 
 def extract_sql(generated_text: str) -> str:
@@ -325,6 +335,9 @@ def _demo_sql_checks():
     assert normalize_sql("SELECT   *\nFROM users") == "select * from users"
     assert normalize_sql("SELECT 1") != normalize_sql("SELECT 2")
     assert normalize_sql("SELECT 1 FROM users") == normalize_sql("select 1 from users")
+    # Keywords are case-insensitive; string literals are not. Guards a real bug.
+    assert normalize_sql('SELECT a FROM t WHERE b = "Xy"') == normalize_sql('select a from t where b = "Xy"')
+    assert normalize_sql('SELECT a FROM t WHERE b = "Xy"') != normalize_sql('SELECT a FROM t WHERE b = "xy"')
     assert extract_sql("SELECT * FROM users ### Explanation\nSome text") == "SELECT * FROM users"
     assert extract_sql("```sql\nSELECT * FROM users;\n```") == "SELECT * FROM users;"
 

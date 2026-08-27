@@ -27,7 +27,7 @@ SEED = 42
 
 # Dataset sampling and evaluation settings.
 TRAIN_SUBSET = 20000
-EVAL_SAMPLE_SIZE = 100
+EVAL_SAMPLE_SIZE = 1000
 TEST_SPLIT_FRACTION = 0.1
 
 # Output and model artifact directories.
